@@ -161,3 +161,57 @@ public void onRttMeasurement(ReceiveChannelEndpoint channelEndpoint, RttMeasurem
     }
 }
 ```
+
+# Create publication Image
+
+
+```java
+void onCreatePublicationImage(int sessionId, int streamId, int initialTermId, int activeTermId, int initialTermOffset, int termBufferLength, int senderMtuLength, int transportIndex, InetSocketAddress controlAddress, InetSocketAddress sourceAddress, ReceiveChannelEndpoint channelEndpoint) {
+    Configuration.validateMtuLength(senderMtuLength);
+
+    UdpChannel subscriptionChannel = channelEndpoint.subscriptionUdpChannel();
+    Configuration.validateInitialWindowLength(subscriptionChannel.receiverWindowLengthOrDefault(ctx.initialWindowLength()), senderMtuLength);
+
+    long joinPosition = computePosition(activeTermId, initialTermOffset, LogBufferDescriptor.positionBitsToShift(termBufferLength), initialTermId);
+    ArrayList<SubscriberPosition> subscriberPositions = createSubscriberPositions(sessionId, streamId, channelEndpoint, joinPosition);
+
+    if (subscriberPositions.size() > 0) {
+        RawLog rawLog = null;
+        CongestionControl congestionControl = null;
+        UnsafeBufferPosition hwmPos = null;
+        UnsafeBufferPosition rcvPos = null;
+        try {
+            long registrationId = toDriverCommands.nextCorrelationId();
+            rawLog = newPublicationImageLog(sessionId, streamId, initialTermId, termBufferLength, isOldestSubscriptionSparse(subscriberPositions), senderMtuLength, registrationId);
+
+            congestionControl = ctx.congestionControlSupplier().newInstance(
+                    registrationId, subscriptionChannel, streamId, sessionId, termBufferLength, senderMtuLength, controlAddress, sourceAddress, 
+                    ctx.receiverCachedNanoClock(), ctx, countersManager);
+
+            SubscriptionLink subscription = subscriberPositions.get(0).subscription();
+            String uri = subscription.channel();
+            hwmPos = ReceiverHwm.allocate(tempBuffer, countersManager, registrationId, sessionId, streamId, uri);
+            rcvPos = ReceiverPos.allocate(tempBuffer, countersManager, registrationId, sessionId, streamId, uri);
+
+            boolean treatAsMulticast = subscription.group() == INFER ? channelEndpoint.udpChannel().isMulticast() : subscription.group() == FORCE_TRUE;
+
+            PublicationImage image = new PublicationImage(
+                    registrationId, ctx, channelEndpoint, transportIndex, controlAddress, sessionId, streamId, initialTermId, activeTermId, initialTermOffset, rawLog, 
+                    treatAsMulticast ? ctx.multicastFeedbackDelayGenerator() : ctx.unicastFeedbackDelayGenerator(), subscriberPositions, hwmPos, rcvPos, sourceAddress, congestionControl);
+
+            publicationImages.add(image);
+            receiverProxy.newPublicationImage(channelEndpoint, image);
+
+            String sourceIdentity = Configuration.sourceIdentity(sourceAddress);
+            for (final SubscriberPosition pos : subscriberPositions) {
+                pos.addLink(image);
+                clientProxy.onAvailableImage(registrationId, streamId, sessionId, pos.subscription().registrationId(), pos.positionCounterId(), rawLog.fileName(), sourceIdentity);
+            }
+        } catch (final Exception ex) {
+            subscriberPositions.forEach((subscriberPosition) -> subscriberPosition.position().close());
+            CloseHelper.quietCloseAll(rawLog, congestionControl, hwmPos, rcvPos);
+            throw ex;
+        }
+    }
+}
+```
