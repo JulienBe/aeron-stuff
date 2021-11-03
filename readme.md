@@ -4,6 +4,16 @@
 private final SubscriptionMessageFlyweight subscriptionMessage = new SubscriptionMessageFlyweight();
 private final RingBuffer toDriverCommandBuffer;
 
+
+/** Create a proxy to a media driver which sends commands via a {@link RingBuffer}.
+ * @param toDriverCommandBuffer to send commands via.
+ * @param clientId              to represent the client.
+ */
+public DriverProxy(final RingBuffer toDriverCommandBuffer, final long clientId) {
+    this.toDriverCommandBuffer = toDriverCommandBuffer;
+    this.clientId = clientId;
+}
+
 public long addSubscription(final String channel, final int streamId) {
   final long registrationId = Aeron.NULL_VALUE;
   final long correlationId = toDriverCommandBuffer.nextCorrelationId(); // the correlation id for the command
