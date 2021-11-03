@@ -128,3 +128,36 @@ public void addSubscription(final int streamId, final int sessionId) {
     }
 }
 ```
+
+# RTT measurement
+
+in DataPacketDispatcher
+
+```java
+
+/**
+ * Dispatch an RTT measurement message to registered interest.
+ *
+ * @param channelEndpoint of reception.
+ * @param msg             flyweight over the network packet.
+ * @param srcAddress      the message came from.
+ * @param transportIndex  on which the message was received.
+ */
+public void onRttMeasurement(ReceiveChannelEndpoint channelEndpoint, RttMeasurementFlyweight msg, InetSocketAddress srcAddress, int transportIndex) {
+    final int streamId = msg.streamId();
+    final StreamInterest streamInterest = streamInterestByIdMap.get(streamId);
+    if (null != streamInterest) {
+        int sessionId = msg.sessionId();
+        SessionInterest sessionInterest = streamInterest.sessionInterestByIdMap.get(sessionId);
+        if (null != sessionInterest && null != sessionInterest.image) {
+            if (RttMeasurementFlyweight.REPLY_FLAG == (msg.flags() & RttMeasurementFlyweight.REPLY_FLAG)) {
+                InetSocketAddress controlAddress = channelEndpoint.isMulticast(transportIndex) ?
+                        channelEndpoint.udpChannel(transportIndex).remoteControl() : srcAddress;
+                channelEndpoint.sendRttMeasurement(transportIndex, controlAddress, sessionId, streamId, msg.echoTimestampNs(), 0, false);
+            } else {
+                sessionInterest.image.onRttMeasurement(msg, transportIndex, srcAddress);
+            }
+        }
+    }
+}
+```
